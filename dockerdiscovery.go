@@ -228,58 +228,22 @@ func (dd *DockerDiscovery) removeContainerInfo(containerID string) error {
 	return nil
 }
 
-func (dd *DockerDiscovery) getServiceAddress(service *swarm.Service) (net.IP, error) {
+func (dd *DockerDiscovery) getServiceAddresses(service *swarm.Service) ([]net.IP, error) {
+	taskFilters := make(map[string][]string)
+	taskFilters["service"] = []string{service.Spec.Name}
+	taskFilters["desired-state"] = []string{"running"}
+	tasks, _ := dd.dockerClient.ListTasks(dockerapi.ListTasksOptions{
+		Filters: taskFilters,
+	})
+	var IPs []net.IP
+	for _, attachment := range tasks[0].NetworksAttachments {
+		for _, address := range attachment.Addresses {
+			IPs = append(IPs, net.ParseIP(address))
 
-	// save this away
-	netName, hasNetName := service.Config.Labels["coredns.dockerdiscovery.network"]
-
-	var networkMode string
-
-	for {
-		if service.NetworkSettings.IPAddress != "" && !hasNetName {
-			return net.ParseIP(service.NetworkSettings.IPAddress), nil
-		}
-
-		networkMode = service.HostConfig.NetworkMode
-
-		// TODO: Deal with services run with host ip (--net=host)
-		// if networkMode == "host" {
-		// 	log.Println("[docker] Service uses host network")
-		// 	return nil, nil
-		// }
-
-		if strings.HasPrefix(networkMode, "service:") {
-			log.Printf("Service %s is in another service's network namspace", service.ID[:12])
-			otherID := service.HostConfig.NetworkMode[len("service:"):]
-			var err error
-			service, err = dd.dockerClient.InspectServiceWithOptions(dockerapi.InspectServiceOptions{ID: otherID})
-			if err != nil {
-				return nil, err
-			}
-		} else {
-			break
 		}
 	}
 
-	var (
-		network dockerapi.ServiceNetwork
-		ok      = false
-	)
-
-	if hasNetName {
-		log.Printf("[docker] network name %s specified (%s)", netName, service.ID[:12])
-		network, ok = service.NetworkSettings.Networks[netName]
-	} else if len(service.NetworkSettings.Networks) == 1 {
-		for netName, network = range service.NetworkSettings.Networks {
-			ok = true
-		}
-	}
-
-	if !ok { // sometime while "network:disconnect" event fire
-		return nil, fmt.Errorf("unable to find network settings for the network %s", networkMode)
-	}
-
-	return net.ParseIP(network.IPAddress), nil // ParseIP return nil when IPAddress equals ""
+	return IPs, nil
 }
 
 func (dd *DockerDiscovery) updateServiceInfo(service *swarm.Service) error {
@@ -287,30 +251,38 @@ func (dd *DockerDiscovery) updateServiceInfo(service *swarm.Service) error {
 	defer dd.mutex.Unlock()
 
 	_, isExist := dd.serviceInfoMap[service.ID]
-	serviceAddress, err := dd.getServiceAddress(service)
+	serviceAddresses, err := dd.getServiceAddresses(service)
 	if isExist { // remove previous resolved service info
 		delete(dd.serviceInfoMap, service.ID)
 	}
 
-	if err != nil || serviceAddress == nil {
-		log.Printf("[docker] Remove service entry %s (%s)", normalizeServiceName(service), service.ID[:12])
-		return err
-	}
+	for _, serviceAddress := range serviceAddresses {
 
-	domains, _ := dd.resolveDomainsByService(service)
-	if len(domains) > 0 {
+		if err != nil || serviceAddress == nil {
+			log.Printf("[docker] Remove service entry %s (%s)", normalizeServiceName(service), service.ID[:12])
+			return err
+		}
+
+		/*
+			domains, _ := dd.resolveDomainsByService(service)
+			if len(domains) > 0 {
+
+			} else if isExist {
+				log.Printf("[docker] Remove service entry %s (%s)", normalizeServiceName(service), service.ID[:12])
+			}
+		*/
+
 		dd.serviceInfoMap[service.ID] = &ServiceInfo{
 			service: service,
 			address: serviceAddress,
-			domains: domains,
+			domains: []string{"swarm.local"},
 		}
 
 		if !isExist {
 			log.Printf("[docker] Add entry of service %s (%s). IP: %v", normalizeServiceName(service), service.ID[:12], serviceAddress)
 		}
-	} else if isExist {
-		log.Printf("[docker] Remove service entry %s (%s)", normalizeServiceName(service), service.ID[:12])
 	}
+
 	return nil
 }
 

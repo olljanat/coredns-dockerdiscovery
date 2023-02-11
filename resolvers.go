@@ -15,7 +15,7 @@ func normalizeContainerName(container *dockerapi.Container) string {
 
 // Is this even needed?
 func normalizeServiceName(service *swarm.Service) string {
-	return strings.TrimLeft(service.Name, "/")
+	return strings.TrimLeft(service.Spec.Name, "/")
 }
 
 // resolvers implements ContainerDomainResolver

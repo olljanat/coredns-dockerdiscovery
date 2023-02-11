@@ -2,13 +2,20 @@ package dockerdiscovery
 
 import (
 	"fmt"
-	dockerapi "github.com/fsouza/go-dockerclient"
 	"log"
 	"strings"
+
+	"github.com/docker/docker/api/types/swarm"
+	dockerapi "github.com/fsouza/go-dockerclient"
 )
 
 func normalizeContainerName(container *dockerapi.Container) string {
 	return strings.TrimLeft(container.Name, "/")
+}
+
+// Is this even needed?
+func normalizeServiceName(service *swarm.Service) string {
+	return strings.TrimLeft(service.Name, "/")
 }
 
 // resolvers implements ContainerDomainResolver
